@@ -16,6 +16,15 @@ public:
     float getPitch();
     float getYaw(); // yaw ยัง drift
 
+    float getAccX() ;
+    float getAccY() ;
+    float getAccZ() ;
+    float getGyroX() ;
+    float getGyroY() ;
+    float getGyroZ() ;
+
+    unsigned long getLastTimestamp();
+
 private:
     uint8_t _csPin;
 
@@ -27,6 +36,7 @@ private:
     float roll=0, pitch=0, yaw=0;
 
     unsigned long lastTime;
+    float ax, ay, az, gx, gy, gz;
 
     void writeReg(uint8_t reg, uint8_t data);
     int16_t read16(uint8_t reg);

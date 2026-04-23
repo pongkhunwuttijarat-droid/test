@@ -1,71 +1,81 @@
-// #include <Arduino.h>
-// #include <BMI160Gen.h>
-// #include <SPI.h>
-
-// // กำหนดขา CS (Chip Select)
-// const int select_pin = 5; 
-
-// void setup() {
-//     Serial.begin(115200);
-//     Serial.println("Initializing BMI160...");
-//     // สำหรับ ESP32 แนะนำให้เริ่มต้น SPI เองก่อนเพื่อความแม่นยำของขา
-//     // VSPI Default: SCK=18, MISO=19, MOSI=23, SS=5
-//     SPI.begin(); 
-//     BMI160.begin();
-//     Serial.println("SPI initialized!");
-//     // เริ่มต้นเซนเซอร์ในโหมด SPI
-//     if (!BMI160.begin(BMI160GenClass::SPI_MODE, select_pin)) {
-//         Serial.println("BMI160 connection failed!");
-//         while (1);
-//     }
-//     Serial.println("BMI160 connected via SPI!");
-// }
-// short * ax,*ay,*az;
-// void loop() {
-    
-//     BMI160.getAcceleration(ax,ay,az);
-//     Serial.print("X: ");
-//     Serial.print(*ax);
-//     Serial.print(" Y: ");
-//     Serial.print(*ay);
-//     Serial.print(" Z: ");
-//     Serial.println(*az);
-//     delay(1000);
-// }
 
 #include <Arduino.h>
+#include <SPI.h>
+#include <SD.h>
 #include "BMI160_IMU.h"
 
-BMI160_IMU imu(5);
+// กำหนดขา CS
+#define BMI_CS 5
+#define SD_CS  4
 
-void setup(){
-  Serial.begin(115200);
-  imu.begin();
+BMI160_IMU imu(BMI_CS);
 
-  Serial.println("Calibrating...");
-  imu.calibrate();
-  Serial.println("Done");
+// ฟังก์ชันสำหรับบันทึกข้อมูลลง SD Card
+// เพิ่มการเช็คใน Setup ให้แน่ใจว่า SD ทำงานได้จริง
+void setup() {
+    Serial.begin(115200);
+    
+    // 1. เริ่มต้น BMI160
+    imu.begin();
+    // 2. เริ่มต้น SD Card
+    if (!SD.begin(SD_CS)) {
+        Serial.println("Error: SD Card Mount Failed!");
+        // หยุดโปรแกรมไว้ตรงนี้ถ้า SD Card มีปัญหา
+        return;
+    }
+    Serial.println("SD Card Initialized.");
+    
+    // สร้าง Header ถ้าไฟล์ยังไม่มี
+    if (!SD.exists("/data.csv")) {
+        File file = SD.open("/data.csv", FILE_WRITE);
+        if(file) {
+            file.println("Time,Roll,Pitch,Yaw,Ax,Ay,Az,Gx,Gy,Gz");
+            file.close();
+        }
+    }
 }
 
-void loop(){
-  imu.update();
+// ปรับปรุง appendFile ให้ปลอดภัยขึ้น
+void appendFile(fs::FS &fs, const char * path, const char * message) {
+    // ใช้ FILE_APPEND เพื่อเขียนต่อท้ายไฟล์เดิม
+    File file = fs.open(path, FILE_APPEND);
+    
+    if(!file) {
+        Serial.println("Failed to open file for appending");
+        return;
+    }
+    
+    // เขียนข้อความและขึ้นบรรทัดใหม่
+    if(file.println(message)) {
+        // บันทึกสำเร็จ
+    } else {
+        Serial.println("Write failed");
+    }
+    
+    // สำคัญที่สุด: ต้องปิดไฟล์เสมอ เพื่อให้ข้อมูลถูกเขียนลง SD Card จริงๆ
+    file.close(); 
+} 
 
-  Serial.print("Roll: "); Serial.print(imu.getRoll());
-  Serial.print(" Pitch: "); Serial.print(imu.getPitch());
-  Serial.print(" Yaw: "); Serial.println(imu.getYaw());
+void loop() {
+    imu.update();
 
-  delay(10);
+    // สร้าง String ข้อมูลในรูปแบบ CSV
+    String dataString = String(imu.getLastTimestamp()) + "," +
+                        String(imu.getRoll()) + "," +
+                        String(imu.getPitch()) + "," +
+                        String(imu.getYaw()) + "," +
+                        String(imu.getAccX()) + "," +
+                        String(imu.getAccY()) + "," +
+                        String(imu.getAccZ()) + "," +
+                        String(imu.getGyroX()) + "," +
+                        String(imu.getGyroY()) + "," +
+                        String(imu.getGyroZ());
+
+    // บันทึกลง SD Card 
+    appendFile(SD, "/data.csv", dataString.c_str());
+
+    // แสดงผลใน Serial เพื่อตรวจสอบ
+    Serial.println(dataString);
+
+    delay(500); // เก็บข้อมูลทุก 100ms
 }
-// uint8_t readRegister(uint8_t reg) {
-//   digitalWrite(CS_PIN, LOW);
-//   SPI.transfer(reg | 0x80); // read
-//   uint8_t data = SPI.transfer(0x00);
-//   digitalWrite(CS_PIN, HIGH);
-//   return data;
-// }
-
-// void loop() {
-//   uint8_t chip_id = readRegister(0x00);
-//   Serial.println(chip_id, HEX);
-//   delay(1000);
-// }
