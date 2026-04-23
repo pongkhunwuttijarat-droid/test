@@ -11,33 +11,34 @@ public:
     void begin();
     void calibrate(int samples = 200);
     void update();
-
+    
     float getRoll();
     float getPitch();
     float getYaw(); // yaw ยัง drift
-
+    
     float getAccX() ;
     float getAccY() ;
     float getAccZ() ;
     float getGyroX() ;
     float getGyroY() ;
     float getGyroZ() ;
-
+    
     unsigned long getLastTimestamp();
-
-private:
+    
+    private:
     uint8_t _csPin;
-
+    
     // offsets
     float gx_off=0, gy_off=0, gz_off=0;
     float ax_off=0, ay_off=0, az_off=0;
-
+    
     // angles
     float roll=0, pitch=0, yaw=0;
-
+    
     unsigned long lastTime;
     float ax, ay, az, gx, gy, gz;
-
+    
+    void readBurst(uint8_t startReg, uint8_t* buffer, uint8_t len);
     void writeReg(uint8_t reg, uint8_t data);
     int16_t read16(uint8_t reg);
 };

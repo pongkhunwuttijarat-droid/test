@@ -20,22 +20,22 @@ void BMI160_IMU::begin() {
     lastTime = millis();
 }
 
-// void BMI160_IMU::calibrate(int samples) {
-//     for(int i=0;i<samples;i++){
-//         gx_off += read16(0x0C);
-//         gy_off += read16(0x0E);
-//         gz_off += read16(0x10);
+void BMI160_IMU::calibrate(int samples) {
+    for(int i=0;i<samples;i++){
+        gx_off += read16(0x0C);
+        gy_off += read16(0x0E);
+        gz_off += read16(0x10);
 
-//         ax_off += read16(0x12);
-//         ay_off += read16(0x14);
-//         az_off += read16(0x16);
+        ax_off += read16(0x12);
+        ay_off += read16(0x14);
+        az_off += read16(0x16);
 
-//         delay(5);
-//     }
+        delay(5);
+    }
 
-//     gx_off/=samples; gy_off/=samples; gz_off/=samples;
-//     ax_off/=samples; ay_off/=samples; az_off/=samples;
-// }
+    gx_off/=samples; gy_off/=samples; gz_off/=samples;
+    ax_off/=samples; ay_off/=samples; az_off/=samples;
+}
 
 // void BMI160_IMU::update() {
 //     unsigned long now = millis();
@@ -64,87 +64,97 @@ void BMI160_IMU::begin() {
 //     // yaw ไม่มี accel ช่วย → drift
 //     yaw += gz * dt;
 // }
-
-void BMI160_IMU::calibrate(int samples) {
-    // 1. Reset variables to ensure a clean slate
-    int64_t gx_sum = 0, gy_sum = 0, gz_sum = 0;
-    int64_t ax_sum = 0, ay_sum = 0, az_sum = 0;
-
-    // 2. Stabilization delay: Give the sensor time to settle 
-    // after the user lets go of the device.
-    delay(1000); 
-
-    for(int i = 0; i < samples; i++) {
-        gx_sum += read16(0x0C);
-        gy_sum += read16(0x0E);
-        gz_sum += read16(0x10);
-
-        ax_sum += read16(0x12);
-        ay_sum += read16(0x14);
-        az_sum += read16(0x16);
-
-        delay(2); // Small delay to prevent reading the exact same data point
-    }
-
-    // 3. Calculate averages using 64-bit precision
-    gx_off = (float)gx_sum / samples;
-    gy_off = (float)gy_sum / samples;
-    gz_off = (float)gz_sum / samples;
-
-    ax_off = (float)ax_sum / samples;
-    ay_off = (float)ay_sum / samples;
-
-    // 4. Critical Z-Axis handling:
-    // If the sensor is flat, it expects 16384 (1g). 
-    // We only want to remove the *bias*, not the gravity component.
-    float az_avg = (float)az_sum / samples;
-    az_off = az_avg - 16384.0; 
-}
-
-// 1. Define configuration constants to improve readability and reliability
-const float GYRO_SCALE = 16.4;  // For +/- 2000 deg/s (ensure you set this in init!)
-const float ACCEL_SCALE = 16384.0; // For +/- 2g
+struct Quaternion {
+    float w = 1, x = 0, y = 0, z = 0;
+} q;
 
 void BMI160_IMU::update() {
-    unsigned long now = micros(); // Use micros for higher precision
-    float dt = (now - lastTime) / 1000000.0;
+    unsigned long now = millis();
+    float dt = (now - lastTime) / 1000.0f;
     lastTime = now;
 
-    // 2. Burst Read: Read 12 bytes (6 axes * 2 bytes) in one go
-    int16_t rawData[6];
-    digitalWrite(_csPin, LOW);
-    SPI.transfer(0x0C | 0x80); // Start reading from 0x0C
-    for(int i = 0; i < 6; i++) {
-        uint8_t l = SPI.transfer(0x00);
-        uint8_t h = SPI.transfer(0x00);
-        rawData[i] = (int16_t)(h << 8 | l);
+    // ---- Read raw ----
+    gx = (read16(0x0C) - gx_off) / 16.4f * DEG_TO_RAD;
+    gy = (read16(0x0E) - gy_off) / 16.4f * DEG_TO_RAD;
+    gz = (read16(0x10) - gz_off) / 16.4f * DEG_TO_RAD;
+
+    ax = (read16(0x12) - ax_off) / 16384.0f;
+    ay = (read16(0x14) - ay_off) / 16384.0f;
+    az = (read16(0x16) - az_off) / 16384.0f;
+
+    // ---- Normalize accel (gravity) ----
+    float norm = sqrt(ax*ax + ay*ay + az*az);
+    if (norm == 0) return;
+    ax /= norm;
+    ay /= norm;
+    az /= norm;
+
+    // ---- Madgwick filter ----
+    float beta = 0.1f; // tuning parameter
+
+    float q1 = q.w, q2 = q.x, q3 = q.y, q4 = q.z;
+
+    // Gradient descent step
+    float f1 = 2*(q2*q4 - q1*q3) - ax;
+    float f2 = 2*(q1*q2 + q3*q4) - ay;
+    float f3 = 2*(0.5f - q2*q2 - q3*q3) - az;
+
+    float J_11or24 = 2*q3;
+    float J_12or23 = 2*q4;
+    float J_13or22 = 2*q1;
+    float J_14or21 = 2*q2;
+    float J_32 = 2*J_14or21;
+    float J_33 = 2*J_11or24;
+
+    float grad1 = J_14or21*f2 - J_11or24*f1;
+    float grad2 = J_12or23*f1 + J_13or22*f2 - J_32*f3;
+    float grad3 = J_12or23*f2 - J_33*f3 - J_13or22*f1;
+    float grad4 = J_14or21*f1 + J_11or24*f2;
+
+    norm = sqrt(grad1*grad1 + grad2*grad2 + grad3*grad3 + grad4*grad4);
+    grad1 /= norm;
+    grad2 /= norm;
+    grad3 /= norm;
+    grad4 /= norm;
+
+    // Quaternion derivative
+    float qDot1 = 0.5f * (-q2*gx - q3*gy - q4*gz) - beta * grad1;
+    float qDot2 = 0.5f * ( q1*gx + q3*gz - q4*gy) - beta * grad2;
+    float qDot3 = 0.5f * ( q1*gy - q2*gz + q4*gx) - beta * grad3;
+    float qDot4 = 0.5f * ( q1*gz + q2*gy - q3*gx) - beta * grad4;
+
+    // Integrate
+    q1 += qDot1 * dt;
+    q2 += qDot2 * dt;
+    q3 += qDot3 * dt;
+    q4 += qDot4 * dt;
+
+    // Normalize quaternion
+    norm = sqrt(q1*q1 + q2*q2 + q3*q3 + q4*q4);
+    q.w = q1 / norm;
+    q.x = q2 / norm;
+    q.y = q3 / norm;
+    q.z = q4 / norm;
+
+    // ---- Convert to Euler ----
+    roll  = atan2(2*(q.w*q.x + q.y*q.z), 1 - 2*(q.x*q.x + q.y*q.y)) * RAD_TO_DEG;
+    pitch = asin(2*(q.w*q.y - q.z*q.x)) * RAD_TO_DEG;
+    yaw   = atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z)) * RAD_TO_DEG;
+
+    // ---- Runtime gyro bias correction (only when still) ----
+    float acc_mag = sqrt(ax*ax + ay*ay + az*az);
+
+    if (fabs(acc_mag - 1.0f) < 0.05f &&
+        fabs(gx) < 0.05f &&
+        fabs(gy) < 0.05f &&
+        fabs(gz) < 0.05f) {
+
+        float alpha = 0.001f;
+        gx_off = (1 - alpha)*gx_off + alpha*(read16(0x0C));
+        gy_off = (1 - alpha)*gy_off + alpha*(read16(0x0E));
+        gz_off = (1 - alpha)*gz_off + alpha*(read16(0x10));
     }
-    digitalWrite(_csPin, HIGH);
-
-    // 3. Process with scaling
-    gx = (rawData[0] - gx_off) / GYRO_SCALE;
-    gy = (rawData[1] - gy_off) 
-    / GYRO_SCALE;
-    gz = (rawData[2] - gz_off) / GYRO_SCALE;
-
-    ax = (rawData[3] - ax_off) / ACCEL_SCALE;
-    ay = (rawData[4] - ay_off) / ACCEL_SCALE;
-    az = (rawData[5] - az_off) / ACCEL_SCALE;
-
-    // 4. Complementary Filter (Simplified)
-    float roll_acc  = atan2(ay, az) * RAD_TO_DEG;
-    float pitch_acc = atan2(-ax, sqrt(ay*ay + az*az)) * RAD_TO_DEG;
-
-    float alpha = 0.98; // Adjust based on your vibration environment
-    
-    // Use the filter on the integrated value
-    roll  = alpha * (roll + gx * dt) + (1.0 - alpha) * roll_acc;
-    pitch = alpha * (pitch + gy * dt) + (1.0 - alpha) * pitch_acc;
-    
-    // Yaw remains relative; recognize this will drift
-    yaw += gz * dt;
 }
-
 unsigned long BMI160_IMU::getLastTimestamp() {
     return lastTime/1000;
 }

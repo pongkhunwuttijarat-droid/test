@@ -10,6 +10,7 @@
 
 BMI160_IMU imu(BMI_CS);
 
+
 // ฟังก์ชันสำหรับบันทึกข้อมูลลง SD Card
 // เพิ่มการเช็คใน Setup ให้แน่ใจว่า SD ทำงานได้จริง
 void setup() {
@@ -17,6 +18,7 @@ void setup() {
     
     // 1. เริ่มต้น BMI160
     imu.begin();
+    imu.calibrate(20);
     // 2. เริ่มต้น SD Card
     if (!SD.begin(SD_CS)) {
         Serial.println("Error: SD Card Mount Failed!");
