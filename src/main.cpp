@@ -9,7 +9,7 @@
 #define SD_CS  4
 
 BMI160_IMU imu(BMI_CS);
-
+String fileName ;
 // ฟังก์ชันสำหรับบันทึกข้อมูลลง SD Card
 // เพิ่มการเช็คใน Setup ให้แน่ใจว่า SD ทำงานได้จริง
 void setup() {
@@ -17,6 +17,7 @@ void setup() {
     
     // 1. เริ่มต้น BMI160
     imu.begin();
+    imu.calibrate();
     // 2. เริ่มต้น SD Card
     if (!SD.begin(SD_CS)) {
         Serial.println("Error: SD Card Mount Failed!");
@@ -30,6 +31,18 @@ void setup() {
         File file = SD.open("/data.csv", FILE_WRITE);
         if(file) {
             file.println("Time,Roll,Pitch,Yaw,Ax,Ay,Az,Gx,Gy,Gz");
+            file.close();
+        }
+    } else {
+        // สร้างไฟล์ใหม่หากไฟล์ data.csv มีอยู่แล้ว
+        int fileNumber = 1;
+        while (SD.exists(String("/data") + fileNumber + ".csv")) {
+            fileNumber++;
+        }
+         fileName = String("/data") + fileNumber + ".csv";
+        File file = SD.open(fileName, FILE_WRITE);
+        if(file) {
+            file.println("Time,Ax,Ay,Az,Gx,Gy,Gz");
             file.close();
         }
     }
@@ -58,12 +71,8 @@ void appendFile(fs::FS &fs, const char * path, const char * message) {
 
 void loop() {
     imu.update();
-
     // สร้าง String ข้อมูลในรูปแบบ CSV
     String dataString = String(imu.getLastTimestamp()) + "," +
-                        String(imu.getRoll()) + "," +
-                        String(imu.getPitch()) + "," +
-                        String(imu.getYaw()) + "," +
                         String(imu.getAccX()) + "," +
                         String(imu.getAccY()) + "," +
                         String(imu.getAccZ()) + "," +
@@ -72,10 +81,10 @@ void loop() {
                         String(imu.getGyroZ());
 
     // บันทึกลง SD Card 
-    appendFile(SD, "/data.csv", dataString.c_str());
+    appendFile(SD, fileName.c_str(), dataString.c_str());
 
     // แสดงผลใน Serial เพื่อตรวจสอบ
     Serial.println(dataString);
 
-    delay(500); // เก็บข้อมูลทุก 100ms
+    delay(150); // เก็บข้อมูลทุก 100ms
 }
